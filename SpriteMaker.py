@@ -1,11 +1,15 @@
 # sprite maker for the N64
-import pygame, pathlib
+import pygame
 from PIL import Image
 import numpy as np
+from pathlib import Path
+import re
+
+# goeric09@gmail.com
 
 pygame.init()
-screen_height = 480
-screen_width = 720
+screen_height = 480 * 3
+screen_width = 720 * 3
 screen = pygame.display.set_mode((screen_width, screen_height))
 clock = pygame.time.Clock()
 FPS = 30
@@ -13,7 +17,7 @@ FPS = 30
 canvas_height = int(screen_height // 1.2) + 50
 canvas_width = int(screen_width // 1.2)
 
-cell_size = 60
+standard_cell_size = 60
 white = (255, 255, 255)
 blue = (0, 0, 255)
 green = (0, 255, 0)
@@ -24,7 +28,7 @@ purple = (255, 0, 255)
 yellow = (255, 255, 0)
 black = (0, 0, 0)
 background_color = (175, 175, 175)
-colors = [blue, green, red, cyan, purple, orange, yellow, white, black]
+colors = [blue, green, red, cyan, purple, orange, yellow, white, black, background_color]
 
 font = pygame.font.SysFont("Arial", 15)
 line_height = font.get_linesize()
@@ -38,6 +42,8 @@ class User:
     def __init__(self) -> None:
         self.tool = 1  # 1=pen, 2=eraser, 3=bucket
         self.active_color = black  # default
+        self.saved = False
+        self.project_name = ""
 
         # 8 bit can hold one 256-color palette, 4bit can hold 16 different palettes each with 16 colors
         self.texture_format = "8bit"  # 8 bit, 4 bit
@@ -74,7 +80,7 @@ class Button(IDrawable):
         draw_text(self.text, self.text_x, self.text_y, self.text_color)
 
     def click(self):  # Fires when the button is clicked
-        print("")
+        pass
 
 
 class ExportButton(Button):
@@ -85,20 +91,49 @@ class ExportButton(Button):
         if user.texture_format == "8bit":  # (height, width, 3)
             raw_colors = [cell.color for cell in grid_cells]
             pixels = np.array(raw_colors, dtype=np.uint8)
-            if pixels.size == canvas_height // cell_size * canvas_width // cell_size * 3:
-                pixels = pixels.reshape((canvas_height // cell_size, canvas_width // cell_size, 3))
+            if pixels.size == canvas_height // standard_cell_size * canvas_width // standard_cell_size * 3:
+                pixels = pixels.reshape((canvas_height // standard_cell_size, canvas_width // standard_cell_size, 3))
             else:
                 print("Image format is Invalid.")
 
             image = Image.fromarray(pixels)
-            image.save("Output_image.png")
+            image.save("Output_image.png")  # Change to not overwrite or ask user!
 
-        else:  # user.texture_format == "5bit"
+        else:  # user.texture_format == "4bit"
             raw_colors = [cell.color for cell in grid_cells]
             pixels = np.array(raw_colors, dtype=np.uint8)
 
-            image = Image.fromarray(pixels >> 3)  # bitshift by 3 to convert to 5 bit color data
+            image = Image.fromarray(pixels >> 4)  # bitshift by 4 to convert to 4 bit color data
             image.save("Output_image.png")
+
+
+class SaveButton(Button):
+    def __init__(self, text, x, y, width, height, color, text_color):
+        super().__init__(text, x, y, width, height, color, text_color)
+
+    def click(self):
+        if user.saved == True:
+            file_name = user.project_name
+        else:
+            file_name = "Project"
+            user.saved = True
+            user.project_name = file_name
+        save_path = Path(f"target/projects/{file_name}")
+        save_path.write_text("")
+        for cell in grid_cells:
+            with open(save_path, "a") as f:
+                f.write(str(cell) + "\n")
+
+
+class ImportButton(Button):
+    def __init__(self, text, x, y, width, height, color, text_color):
+        super().__init__(text, x, y, width, height, color, text_color)
+
+    def click(self):
+        file_name = "Project"
+        load_path = Path(f"target/projects/{file_name}")
+        contents = load_path.read_text()
+        lines = contents.split("\n")
 
 
 class PenButton(Button):
@@ -156,6 +191,17 @@ class PaletteButton(Button):
         user.active_color = self.color
         self.verify_color(old_color)
 
+    def draw(self):
+        pygame.draw.rect(screen, self.color, self.button_rect)
+        if self.color == black:
+            pygame.draw.rect(screen, black, self.button_rect)
+            pygame.draw.rect(screen, white, self.button_rect, 1)
+        else:
+            pygame.draw.rect(screen, black, self.button_rect, 1)
+        if self.color == background_color:
+            draw_text("BG color", self.text_x - 6, self.text_y + 5, black)
+        draw_text(self.text, self.text_x, self.text_y + 5, self.text_color)
+
     def verify_color(self, old_color):
         if old_color != user.active_color:
             print(f"active color is now {user.active_color}!")
@@ -168,8 +214,10 @@ palettes = []
 
 def make_palette():
     for idx, color in enumerate(colors):
-        y_level = idx * 40
-        palettes.append(PaletteButton(660, y_level, 60, 40, color))
+        height = 40
+        width = 60
+        y_level = idx * height
+        palettes.append(PaletteButton(screen_width - width, y_level, width, height, color))
 
     # for i in range(0, 480, 80):
     #     if i > 0:
@@ -190,20 +238,23 @@ class GridCell(IDrawable):
         self.y = y
         self.width = width
         self.height = height
-        self.rect = pygame.Rect((x, y, cell_size, cell_size))
+        self.rect = pygame.Rect((x, y, standard_cell_size, standard_cell_size))
 
     def draw(self):
         pygame.draw.rect(screen, self.color, self.rect)
         pygame.draw.rect(screen, self.border_color, self.rect, 1)  # That sweet sweet outline :3 :3 :3 X3
 
-    def click(self, tool):
+    def click(self, tool):  # logic for grid click
         if tool == 1:  # pen
             self.color = user.active_color
         elif tool == 2:  # eraser
             self.color = background_color
         elif tool == 3:  # bucket
             for cell in grid_cells:
-                cell.color = user.active_color
+                if cell.color == self.color:
+                    cell.color = user.active_color
+                else:
+                    continue
 
     def __str__(self) -> str:
         return str(self.rect)
@@ -214,12 +265,14 @@ grid_cells: list[GridCell] = []
 
 # Create Objects #######
 def make_grid():
-    # canvas_rect = pygame.Rect(screen_width // 4, screen_height // 4, canvas_width, canvas_height)
-    for row in range(canvas_height // cell_size):
-        for col in range(canvas_width // cell_size):
-            x = col * cell_size + (screen_width - canvas_width) // 2 % canvas_width
-            y = row * cell_size + (screen_height - canvas_height) // 2 % canvas_height
-            active_rect = GridCell(background_color, x, y, cell_size, cell_size)
+    # math is the sexiest major, prove me the fuck wrong
+    grid_cell_size = (canvas_height + canvas_width) // ((screen_width + screen_height) // standard_cell_size)  # Make it dynamic for scaling with a variety of window sizes!
+    # print(f"h:{canvas_height}\nw:{canvas_width}\nc:{grid_cell_size}")
+    for row in range(canvas_height // grid_cell_size):
+        for col in range(canvas_width // grid_cell_size):
+            x = col * grid_cell_size + (screen_width - canvas_width) // 2 % canvas_width
+            y = row * grid_cell_size + (screen_height - canvas_height) // 2 % canvas_height
+            active_rect = GridCell(background_color, x, y, grid_cell_size, grid_cell_size)
             grid_cells.append(active_rect)
     for item in grid_cells:
         print(item)
@@ -228,11 +281,10 @@ def make_grid():
 
 def make_buttons():
     buttons.append(ExportButton("Export", 0, 0, 60, 30, black, white))
-    buttons.append(
-        PenButton("*Pen*", 0, 35, 60, 30, black, white),
-    )
+    buttons.append(PenButton("*Pen*", 0, 35, 60, 30, black, white))
     buttons.append(BucketButton("Bucket", 0, 70, 60, 30, black, white))
     buttons.append(EraserButton("Eraser!", 0, 105, 60, 30, black, white))
+    buttons.append(SaveButton("Save", 0, 140, 60, 30, black, white))
 
 
 ########################
